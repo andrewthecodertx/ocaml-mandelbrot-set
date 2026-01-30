@@ -1,0 +1,3 @@
+(executable
+ (name mandelbrot)
+ (libraries tsdl))

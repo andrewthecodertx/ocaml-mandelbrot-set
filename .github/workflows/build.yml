@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2 (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
+      - name: Install SDL2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5
+
+      - name: Install dependencies
+        run: opam install . --deps-only -y
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mandelbrot-${{ runner.os }}
+          path: _build/default/mandelbrot.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release binaries
+        run: |
+          mkdir -p release
+          cp artifacts/mandelbrot-Linux/mandelbrot.exe release/mandelbrot-linux-x86_64
+          cp artifacts/mandelbrot-macOS/mandelbrot.exe release/mandelbrot-macos-x86_64
+          chmod +x release/mandelbrot-linux-x86_64 release/mandelbrot-macos-x86_64
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
