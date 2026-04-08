@@ -68,6 +68,36 @@ let redraw renderer texture xmin xmax ymin ymax =
   Sdl.render_copy renderer texture |> ignore;
   Sdl.render_present renderer
 
+(* Shader emulation solution suggested by sol.vin (https://itch.io/profile/sol-vin) *)
+(* Takes normalized coordinates (0.0 to 1.0) and returns color, shader-style *)
+let simple_shader x y time =
+  let r = sin (x *. 6.28 +. time) *. 0.5 +. 0.5 in
+  let g = cos (y *. 6.28 +. time *. 1.5) *. 0.5 +. 0.5 in
+  let b = sin ((x +. y) *. 3.14 +. time *. 0.8) *. 0.5 +. 0.5 in
+  Int32.of_int ((int_of_float (r *. 255.0) lsl 16) lor
+                (int_of_float (g *. 255.0) lsl 8) lor
+                (int_of_float (b *. 255.0)) lor 0xFF000000)
+
+(* Pixel shader implementation - processes each pixel independently (sol.vin) *)
+let draw_shader pixels pitch time =
+  for sy = 0 to height - 1 do
+    let y = float sy /. float (height - 1) in
+    for sx = 0 to width - 1 do
+      let x = float sx /. float (width - 1) in
+      pixels.{sy * pitch + sx} <- simple_shader x y time
+    done
+  done
+
+let redraw_shader renderer texture time =
+  let (pixels, pitch) =
+    Sdl.lock_texture texture None Bigarray.int32 |> or_exit
+  in
+  draw_shader pixels pitch time;
+  Sdl.unlock_texture texture;
+  Sdl.render_clear renderer |> ignore;
+  Sdl.render_copy renderer texture |> ignore;
+  Sdl.render_present renderer
+
 let () =
   Sdl.init Sdl.Init.video |> or_exit;
   let window =
@@ -83,7 +113,10 @@ let () =
       Sdl.Texture.access_streaming ~w:width ~h:height |> or_exit
   in
   let view = ref (-2.5, 1.0, -1.25, 1.25) in
+  (* Shader mode toggle functionality (sol.vin) *)
+  let shader_mode = ref false in
   let xmin, xmax, ymin, ymax = !view in
+  let start_time = Sdl.get_ticks () in
   redraw renderer texture xmin xmax ymin ymax;
   let event = Sdl.Event.create () in
   let running = ref true in
@@ -103,7 +136,11 @@ let () =
         let cx, cy = pixel_to_complex mx my xmin xmax ymin ymax in
         view := zoom_at cx cy xmin xmax ymin ymax zoom_factor;
         let xmin, xmax, ymin, ymax = !view in
-        redraw renderer texture xmin xmax ymin ymax
+        if !shader_mode then
+          let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+          redraw_shader renderer texture time
+        else
+          redraw renderer texture xmin xmax ymin ymax
       end
       else if typ = Sdl.Event.key_down then begin
         let key = Sdl.Event.(get event keyboard_keycode) in
@@ -115,18 +152,39 @@ let () =
           let cx, cy = pixel_to_complex mx my xmin xmax ymin ymax in
           view := zoom_at cx cy xmin xmax ymin ymax zoom_factor;
           let xmin, xmax, ymin, ymax = !view in
-          redraw renderer texture xmin xmax ymin ymax
+          if !shader_mode then
+            let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+            redraw_shader renderer texture time
+          else
+            redraw renderer texture xmin xmax ymin ymax
         end
         else if key = Sdl.K.minus || key = Sdl.K.kp_minus then begin
           let cx, cy = pixel_to_complex mx my xmin xmax ymin ymax in
           view := zoom_at cx cy xmin xmax ymin ymax (1.0 /. zoom_factor);
           let xmin, xmax, ymin, ymax = !view in
-          redraw renderer texture xmin xmax ymin ymax
+          if !shader_mode then
+            let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+            redraw_shader renderer texture time
+          else
+            redraw renderer texture xmin xmax ymin ymax
+        end
+        (* 't' key toggles between Mandelbrot and shader modes (sol.vin) *)
+        else if key = Sdl.K.t then begin
+          shader_mode := not !shader_mode;
+          if !shader_mode then
+            let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+            redraw_shader renderer texture time
+          else
+            redraw renderer texture xmin xmax ymin ymax
         end
         else if key = Sdl.K.r then begin
           view := (-2.5, 1.0, -1.25, 1.25);
           let xmin, xmax, ymin, ymax = !view in
-          redraw renderer texture xmin xmax ymin ymax
+          if !shader_mode then
+            let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+            redraw_shader renderer texture time
+          else
+            redraw renderer texture xmin xmax ymin ymax
         end
         else begin
           let new_view =
@@ -142,10 +200,14 @@ let () =
               None
           in
           match new_view with
-          | Some v ->
-            view := v;
-            let xmin, xmax, ymin, ymax = !view in
-            redraw renderer texture xmin xmax ymin ymax
+           | Some v ->
+             view := v;
+             let xmin, xmax, ymin, ymax = !view in
+             if !shader_mode then
+                let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+               redraw_shader renderer texture time
+             else
+               redraw renderer texture xmin xmax ymin ymax
           | None -> ()
         end
       end
