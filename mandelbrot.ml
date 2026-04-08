@@ -6,21 +6,26 @@ let height = 600
 let max_iteration = 1000
 
 let iterations x0 y0 =
-  let c = { Complex.re = x0; im = y0 } in
-  let z = ref Complex.zero in
+  let zr = ref 0.0 in
+  let zi = ref 0.0 in
   let iter = ref 0 in
-  while !iter < max_iteration && (!z).Complex.re *. (!z).Complex.re +. (!z).Complex.im *. (!z).Complex.im <= 4.0 do
-    z := Complex.add (Complex.mul !z !z) c;
+  while !iter < max_iteration && !zr *. !zr +. !zi *. !zi <= 4.0 do
+    let zr2 = !zr *. !zr -. !zi *. !zi +. x0 in
+    let zi2 = 2.0 *. !zr *. !zi +. y0 in
+    zr := zr2;
+    zi := zi2;
     incr iter
   done;
   !iter
 
 let color_of_iter n =
   if n = max_iteration then
-    0xFF000000l
+    Int32.of_int 0xFF000000
   else
-    let v = int_of_float (255.0 *. float n /. float max_iteration) in
-    Int32.of_int (0xFF000000 lor (v lsl 16) lor ((v / 2) lsl 8) lor (255 - v))
+    let t = float n /. float max_iteration in
+    let v = int_of_float (255.0 *. t) in
+    let g = int_of_float (255.0 *. (t *. 0.85 +. 0.1)) in
+    Int32.of_int (0xFFAAAAAA lor (v lsl 16) lor (g lsl 8) lor g)
 
 let zoom_factor = 2.0
 let pan_fraction = 0.25
@@ -32,13 +37,15 @@ let pixel_to_complex px py xmin xmax ymin ymax =
   (x, y)
 
 let draw_mandelbrot pixels pitch xmin xmax ymin ymax =
+  let dx = (xmax -. xmin) /. float (width - 1) in
+  let dy = (ymax -. ymin) /. float (height - 1) in
   for sy = 0 to height - 1 do
-    (* SDL row sy=0 is top of window = ymax in complex plane *)
-    let y0 = ymax -. (float sy /. float (height - 1)) *. (ymax -. ymin) in
+    let y0 = ymax -. float sy *. dy in
+    let row = sy * pitch in
     for sx = 0 to width - 1 do
-      let x0 = xmin +. (float sx /. float (width - 1)) *. (xmax -. xmin) in
+      let x0 = xmin +. float sx *. dx in
       let it = iterations x0 y0 in
-      pixels.{sy * pitch + sx} <- color_of_iter it
+      pixels.{row + sx} <- color_of_iter it
     done
   done
 
@@ -71,9 +78,11 @@ let redraw renderer texture xmin xmax ymin ymax =
 (* Shader emulation solution suggested by sol.vin (https://itch.io/profile/sol-vin) *)
 (* Takes normalized coordinates (0.0 to 1.0) and returns color, shader-style *)
 let simple_shader x y time =
-  let r = sin (x *. 6.28 +. time) *. 0.5 +. 0.5 in
-  let g = cos (y *. 6.28 +. time *. 1.5) *. 0.5 +. 0.5 in
-  let b = sin ((x +. y) *. 3.14 +. time *. 0.8) *. 0.5 +. 0.5 in
+  (* Use precomputed values and simpler functions for speed *)
+  let phase = time *. 2.0 in
+  let r = 0.5 +. 0.4 *. sin (x *. 8.0 +. phase) in
+  let g = 0.5 +. 0.4 *. cos (y *. 6.0 +. phase *. 1.3) in  
+  let b = 0.5 +. 0.4 *. sin ((x +. y) *. 4.0 +. phase *. 0.7) in
   Int32.of_int ((int_of_float (r *. 255.0) lsl 16) lor
                 (int_of_float (g *. 255.0) lsl 8) lor
                 (int_of_float (b *. 255.0)) lor 0xFF000000)
@@ -145,11 +154,11 @@ let () =
       else if typ = Sdl.Event.key_down then begin
         let key = Sdl.Event.(get event keyboard_keycode) in
         let xmin, xmax, ymin, ymax = !view in
-        let _, (mx, my) = Sdl.get_mouse_state () in
         if key = Sdl.K.q || key = Sdl.K.escape then
           running := false
         else if key = Sdl.K.equals || key = Sdl.K.kp_plus then begin
-          let cx, cy = pixel_to_complex mx my xmin xmax ymin ymax in
+          let cx = (xmin +. xmax) /. 2.0 in
+          let cy = (ymin +. ymax) /. 2.0 in
           view := zoom_at cx cy xmin xmax ymin ymax zoom_factor;
           let xmin, xmax, ymin, ymax = !view in
           if !shader_mode then
@@ -159,7 +168,8 @@ let () =
             redraw renderer texture xmin xmax ymin ymax
         end
         else if key = Sdl.K.minus || key = Sdl.K.kp_minus then begin
-          let cx, cy = pixel_to_complex mx my xmin xmax ymin ymax in
+          let cx = (xmin +. xmax) /. 2.0 in
+          let cy = (ymin +. ymax) /. 2.0 in
           view := zoom_at cx cy xmin xmax ymin ymax (1.0 /. zoom_factor);
           let xmin, xmax, ymin, ymax = !view in
           if !shader_mode then
@@ -168,13 +178,39 @@ let () =
           else
             redraw renderer texture xmin xmax ymin ymax
         end
-        (* 't' key toggles between Mandelbrot and shader modes (sol.vin) *)
-        else if key = Sdl.K.t then begin
-          shader_mode := not !shader_mode;
+        (* Center-based zoom keys: PageUp and PageDown for easier navigation *)
+        else if key = Sdl.K.pageup then begin
+          let cx = (xmin +. xmax) /. 2.0 in
+          let cy = (ymin +. ymax) /. 2.0 in
+          view := zoom_at cx cy xmin xmax ymin ymax zoom_factor;
+          let xmin, xmax, ymin, ymax = !view in
           if !shader_mode then
             let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
             redraw_shader renderer texture time
           else
+            redraw renderer texture xmin xmax ymin ymax
+        end
+        else if key = Sdl.K.pagedown then begin
+          let cx = (xmin +. xmax) /. 2.0 in
+          let cy = (ymin +. ymax) /. 2.0 in
+          view := zoom_at cx cy xmin xmax ymin ymax (1.0 /. zoom_factor);
+          let xmin, xmax, ymin, ymax = !view in
+          if !shader_mode then
+            let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+            redraw_shader renderer texture time
+          else
+            redraw renderer texture xmin xmax ymin ymax
+        end
+
+        (* 't' key toggles between Mandelbrot and shader modes (sol.vin) *)
+        else if key = Sdl.K.t then begin
+          shader_mode := not !shader_mode;
+          if !shader_mode then begin
+            (* Reset to default view for shader mode *)
+            view := (-2.5, 1.0, -1.25, 1.25);
+            let time = (float (Int32.to_int (Sdl.get_ticks ()) - Int32.to_int start_time)) /. 1000.0 in
+            redraw_shader renderer texture time
+          end else
             redraw renderer texture xmin xmax ymin ymax
         end
         else if key = Sdl.K.r then begin
