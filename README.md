@@ -23,15 +23,14 @@ brew install sdl2
 pacman -S mingw-w64-x86_64-SDL2
 ```
 
-```bash
-opam install . --deps-only
-```
-
 ## Build & Run
 
 ```bash
-dune build
-dune exec mandelbrot
+make deps     # install OCaml dependencies
+make build    # build the project
+make run      # build and run the viewer
+make release  # build with the release profile
+make clean    # remove build artifacts
 ```
 
 ## Controls
@@ -47,3 +46,7 @@ dune exec mandelbrot
 | `k` / `w` | Pan up |
 | `r` | Reset to original view |
 | `q` / `Esc` | Quit |
+
+## License
+
+[MIT](LICENSE) © 2026 Andrew S Erwin
