@@ -49,4 +49,8 @@ make clean    # remove build artifacts
 
 ## License
 
-[MIT](LICENSE) © 2026 Andrew S Erwin
+MIT, see [LICENSE](LICENSE).
+
+## Contributing
+
+PRs welcome. Please open an issue first for major changes.
